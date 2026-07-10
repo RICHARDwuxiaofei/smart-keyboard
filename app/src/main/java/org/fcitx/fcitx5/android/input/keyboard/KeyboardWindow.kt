@@ -15,6 +15,7 @@ import org.fcitx.fcitx5.android.R
 import org.fcitx.fcitx5.android.core.CapabilityFlags
 import org.fcitx.fcitx5.android.core.InputMethodEntry
 import org.fcitx.fcitx5.android.data.prefs.AppPrefs
+import org.fcitx.fcitx5.android.extension.ai.DataAssistanceCoordinator
 import org.fcitx.fcitx5.android.input.bar.KawaiiBarComponent
 import org.fcitx.fcitx5.android.input.broadcast.InputBroadcastReceiver
 import org.fcitx.fcitx5.android.input.broadcast.ReturnKeyDrawableComponent
@@ -101,6 +102,7 @@ class KeyboardWindow : InputWindow.SimpleInputWindow<KeyboardWindow>(), Essentia
             keyboardView.removeView(it)
             it.keyActionListener = null
             it.popupActionListener = null
+            it.onPanicGesture = null
         }
     }
 
@@ -109,6 +111,9 @@ class KeyboardWindow : InputWindow.SimpleInputWindow<KeyboardWindow>(), Essentia
         currentKeyboard?.let {
             it.keyActionListener = keyActionListener
             it.popupActionListener = popupActionListener
+            it.onPanicGesture = {
+                DataAssistanceCoordinator.getInstance(service).panicReset()
+            }
             keyboardView.apply { add(it, lParams(matchParent, matchParent)) }
             it.onAttach()
             it.onReturnDrawableUpdate(returnKeyDrawable.resourceId)
@@ -163,6 +168,9 @@ class KeyboardWindow : InputWindow.SimpleInputWindow<KeyboardWindow>(), Essentia
         currentKeyboard?.let {
             it.keyActionListener = keyActionListener
             it.popupActionListener = popupActionListener
+            it.onPanicGesture = {
+                DataAssistanceCoordinator.getInstance(service).panicReset()
+            }
             it.onAttach()
         }
         notifyBarLayoutChanged()
@@ -173,6 +181,7 @@ class KeyboardWindow : InputWindow.SimpleInputWindow<KeyboardWindow>(), Essentia
             it.onDetach()
             it.keyActionListener = null
             it.popupActionListener = null
+            it.onPanicGesture = null
         }
         popup.dismissAll()
     }

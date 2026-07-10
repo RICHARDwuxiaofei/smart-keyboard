@@ -15,9 +15,12 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import org.fcitx.fcitx5.android.R
+import org.fcitx.fcitx5.android.core.CandidateWord
 import org.fcitx.fcitx5.android.core.FcitxEvent
 import org.fcitx.fcitx5.android.daemon.launchOnReady
 import org.fcitx.fcitx5.android.data.prefs.AppPrefs
+import org.fcitx.fcitx5.android.extension.ai.AiCandidateOverlay
+import org.fcitx.fcitx5.android.extension.ai.DataAssistanceCoordinator
 import org.fcitx.fcitx5.android.input.bar.ExpandButtonStateMachine.BooleanKey.ExpandedCandidatesEmpty
 import org.fcitx.fcitx5.android.input.bar.ExpandButtonStateMachine.TransitionEvent.ExpandedCandidatesUpdated
 import org.fcitx.fcitx5.android.input.bar.KawaiiBarComponent
@@ -30,6 +33,7 @@ import org.fcitx.fcitx5.android.input.candidates.horizontal.HorizontalCandidateM
 import org.fcitx.fcitx5.android.input.dependency.UniqueViewComponent
 import org.fcitx.fcitx5.android.input.dependency.context
 import org.fcitx.fcitx5.android.input.dependency.fcitx
+import org.fcitx.fcitx5.android.input.dependency.inputMethodService
 import org.fcitx.fcitx5.android.input.dependency.inputView
 import org.fcitx.fcitx5.android.input.dependency.theme
 import org.mechdancer.dependency.manager.must
@@ -41,6 +45,7 @@ class HorizontalCandidateComponent :
 
     private val context by manager.context()
     private val fcitx by manager.fcitx()
+    private val service by manager.inputMethodService()
     private val theme by manager.theme()
     private val inputView by manager.inputView()
     private val bar: KawaiiBarComponent by manager.must()
@@ -57,6 +62,8 @@ class HorizontalCandidateComponent :
 
     private var layoutMinWidth = 0
     private var layoutFlexGrow = 1f
+    private var rawCandidates = emptyArray<CandidateWord>()
+    private var rawTotal = -1
 
     /**
      * (for [HorizontalCandidateMode.AutoFillWidth] only)
@@ -93,11 +100,21 @@ class HorizontalCandidateComponent :
                     flexGrow = layoutFlexGrow
                 }
                 holder.itemView.setOnClickListener {
-                    fcitx.launchOnReady { it.select(holder.idx) }
+                    val fcitxIndex = AiCandidateOverlay.mapDisplayedIndexToFcitxIndex(holder.idx)
+                    if (fcitxIndex == null) {
+                        DataAssistanceCoordinator.getInstance(service).injectCandidateOverlayText()
+                    } else {
+                        fcitx.launchOnReady { it.select(fcitxIndex) }
+                    }
                 }
                 holder.itemView.setOnLongClickListener {
-                    inputView.showCandidateActionMenu(holder.idx, holder.candidate.text, holder.ui.root)
-                    true
+                    val fcitxIndex = AiCandidateOverlay.mapDisplayedIndexToFcitxIndex(holder.idx)
+                    if (fcitxIndex == null) {
+                        true
+                    } else {
+                        inputView.showCandidateActionMenu(fcitxIndex, holder.candidate.text, holder.ui.root)
+                        true
+                    }
                 }
             }
 
@@ -148,6 +165,18 @@ class HorizontalCandidateComponent :
         }
     }
 
+    private val aiCandidateListener = {
+        updateDisplayedCandidates(rawCandidates, rawTotal)
+    }
+
+    init {
+        AiCandidateOverlay.addListener(aiCandidateListener)
+    }
+
+    fun dispose() {
+        AiCandidateOverlay.removeListener(aiCandidateListener)
+    }
+
     override val view by lazy {
         object : RecyclerView(context) {
             override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -189,10 +218,21 @@ class HorizontalCandidateComponent :
                 secondLayoutPassNeeded = false
             }
         }
-        adapter.updateCandidates(candidates, total)
+        rawCandidates = candidates
+        rawTotal = total
+        updateDisplayedCandidates(candidates, total)
         // not sure why empty candidates won't trigger `FlexboxLayoutManager#onLayoutCompleted()`
         if (candidates.isEmpty()) {
             refreshExpanded(0)
         }
+    }
+
+    private fun updateDisplayedCandidates(
+        candidates: Array<CandidateWord>,
+        total: Int
+    ) {
+        val displayCandidates = AiCandidateOverlay.applyTo(candidates)
+        val displayTotal = if (AiCandidateOverlay.hasSuggestion() && total >= 0) total + 1 else total
+        adapter.updateCandidates(displayCandidates, displayTotal)
     }
 }

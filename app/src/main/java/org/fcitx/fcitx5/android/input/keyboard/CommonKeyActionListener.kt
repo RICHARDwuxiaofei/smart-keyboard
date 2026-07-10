@@ -9,8 +9,12 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import org.fcitx.fcitx5.android.core.FcitxAPI
+import org.fcitx.fcitx5.android.core.FcitxKeyMapping
+import org.fcitx.fcitx5.android.core.KeyStates
 import org.fcitx.fcitx5.android.daemon.launchOnReady
 import org.fcitx.fcitx5.android.data.prefs.AppPrefs
+import org.fcitx.fcitx5.android.extension.ai.AiManualInputPanel
+import org.fcitx.fcitx5.android.extension.ai.DataAssistanceCoordinator
 import org.fcitx.fcitx5.android.input.broadcast.PreeditEmptyStateComponent
 import org.fcitx.fcitx5.android.input.candidates.horizontal.HorizontalCandidateComponent
 import org.fcitx.fcitx5.android.input.dependency.context
@@ -26,6 +30,8 @@ import org.fcitx.fcitx5.android.input.keyboard.KeyAction.DeleteSelectionAction
 import org.fcitx.fcitx5.android.input.keyboard.KeyAction.FcitxKeyAction
 import org.fcitx.fcitx5.android.input.keyboard.KeyAction.LangSwitchAction
 import org.fcitx.fcitx5.android.input.keyboard.KeyAction.MoveSelectionAction
+import org.fcitx.fcitx5.android.input.keyboard.KeyAction.AiCaptureCurrentInputAction
+import org.fcitx.fcitx5.android.input.keyboard.KeyAction.AiOpenManualInputAction
 import org.fcitx.fcitx5.android.input.keyboard.KeyAction.PickerSwitchAction
 import org.fcitx.fcitx5.android.input.keyboard.KeyAction.QuickPhraseAction
 import org.fcitx.fcitx5.android.input.keyboard.KeyAction.ShowInputMethodPickerAction
@@ -59,7 +65,6 @@ class CommonKeyActionListener :
 
     private val kbdPrefs = AppPrefs.getInstance().keyboard
 
-    private val spaceKeyLongPressBehavior by kbdPrefs.spaceKeyLongPressBehavior
     private val langSwitchKeyBehavior by kbdPrefs.langSwitchKeyBehavior
 
     private var backspaceSwipeState = Stopped
@@ -89,6 +94,7 @@ class CommonKeyActionListener :
 
     val listener by lazy {
         KeyActionListener { action, _ ->
+            if (handleAiManualAction(action)) return@KeyActionListener
             when (action) {
                 is FcitxKeyAction -> service.postFcitxJob {
                     sendKey(action.act, action.states.states, action.code)
@@ -171,19 +177,62 @@ class CommonKeyActionListener :
                     }
                 }
                 is SpaceLongPressAction -> {
-                    when (spaceKeyLongPressBehavior) {
-                        SpaceLongPressBehavior.None -> {}
-                        SpaceLongPressBehavior.Enumerate -> service.postFcitxJob {
-                            enumerateIme()
-                        }
-                        SpaceLongPressBehavior.ToggleActivate -> service.postFcitxJob {
-                            toggleIme()
-                        }
-                        SpaceLongPressBehavior.ShowPicker -> showInputMethodPicker()
-                    }
+                    DataAssistanceCoordinator.getInstance(service).triggerDataAssistance()
                 }
                 else -> {}
             }
+        }
+    }
+
+    private fun handleAiManualAction(action: KeyAction): Boolean {
+        val coordinator = DataAssistanceCoordinator.getInstance(service)
+        return when (action) {
+            is AiOpenManualInputAction -> {
+                coordinator.enableManualModeAndOpenInput()
+                true
+            }
+            is AiCaptureCurrentInputAction -> {
+                if (coordinator.isManualModeEnabled()) {
+                    coordinator.captureCurrentInputForManualMode()
+                    true
+                } else {
+                    service.postFcitxJob {
+                        sendKey(",", KeyStates.Virtual.states)
+                    }
+                    true
+                }
+            }
+            is SpaceLongPressAction -> {
+                if (coordinator.isManualModeEnabled()) {
+                    coordinator.triggerCurrentInputAssistance()
+                    true
+                } else {
+                    false
+                }
+            }
+            is FcitxKeyAction -> {
+                if (!AiManualInputPanel.isVisible()) return false
+                AiManualInputPanel.append(action.act)
+                true
+            }
+            is CommitAction -> {
+                if (!AiManualInputPanel.isVisible()) return false
+                AiManualInputPanel.append(action.text)
+                true
+            }
+            is SymAction -> {
+                if (!AiManualInputPanel.isVisible()) return false
+                when (action.sym.sym) {
+                    FcitxKeyMapping.FcitxKey_BackSpace -> AiManualInputPanel.backspace()
+                    FcitxKeyMapping.FcitxKey_space -> AiManualInputPanel.append(" ")
+                    FcitxKeyMapping.FcitxKey_Return -> AiManualInputPanel.append("\n")
+                    else -> action.sym.sym.takeIf { it in 0x20..0x10FFFF }?.let {
+                        AiManualInputPanel.append(String(Character.toChars(it)))
+                    }
+                }
+                true
+            }
+            else -> false
         }
     }
 }

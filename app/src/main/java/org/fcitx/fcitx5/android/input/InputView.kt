@@ -7,12 +7,20 @@ package org.fcitx.fcitx5.android.input
 
 import android.annotation.SuppressLint
 import android.content.res.Configuration
+import android.graphics.Color
 import android.os.Build
+import android.text.InputType
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InlineSuggestionsResponse
+import android.widget.Button
+import android.widget.EditText
 import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
 import androidx.annotation.Keep
 import androidx.annotation.RequiresApi
 import androidx.core.view.updateLayoutParams
@@ -24,6 +32,9 @@ import org.fcitx.fcitx5.android.data.prefs.AppPrefs
 import org.fcitx.fcitx5.android.data.prefs.ManagedPreferenceProvider
 import org.fcitx.fcitx5.android.data.theme.Theme
 import org.fcitx.fcitx5.android.data.theme.ThemeManager
+import org.fcitx.fcitx5.android.extension.ai.AiInlinePanel
+import org.fcitx.fcitx5.android.extension.ai.AiManualInputPanel
+import org.fcitx.fcitx5.android.extension.ai.DataAssistanceCoordinator
 import org.fcitx.fcitx5.android.input.bar.KawaiiBarComponent
 import org.fcitx.fcitx5.android.input.broadcast.InputBroadcaster
 import org.fcitx.fcitx5.android.input.broadcast.PreeditEmptyStateComponent
@@ -88,6 +99,50 @@ class InputView(
         // height as keyboardBottomPadding
         // bottomMargin as WindowInsets (Navigation Bar) offset
         setOnClickListener(placeholderOnClickListener)
+    }
+    private val aiPanelTextView = TextView(themedContext).apply {
+        textSize = 13f
+        includeFontPadding = false
+        setLineSpacing(0f, 1.08f)
+        setPadding(dp(10), dp(6), dp(10), dp(6))
+        setTextColor(aiPanelTextColor())
+    }
+    private val aiPanelScrollView = ScrollView(themedContext).apply {
+        visibility = GONE
+        isFillViewport = false
+        overScrollMode = View.OVER_SCROLL_NEVER
+        addView(aiPanelTextView, ViewGroup.LayoutParams(matchParent, wrapContent))
+    }
+    private val aiManualInputEdit = EditText(themedContext).apply {
+        textSize = 15f
+        minLines = 1
+        maxLines = 2
+        isSingleLine = false
+        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        showSoftInputOnFocus = false
+        setPadding(dp(10), 0, dp(10), 0)
+        hint = "输入题目"
+    }
+    private val aiManualInputPanel = LinearLayout(themedContext).apply {
+        orientation = LinearLayout.HORIZONTAL
+        visibility = GONE
+        addView(aiManualInputEdit, LinearLayout.LayoutParams(0, matchParent, 1f))
+        addView(Button(themedContext).apply {
+            text = "发送"
+            textSize = 13f
+            minWidth = dp(56)
+            setOnClickListener {
+                DataAssistanceCoordinator.getInstance(service).triggerManualInputAssistance()
+            }
+        }, LinearLayout.LayoutParams(dp(62), matchParent))
+        addView(Button(themedContext).apply {
+            text = "关闭"
+            textSize = 13f
+            minWidth = dp(56)
+            setOnClickListener {
+                AiManualInputPanel.hide(clearText = false)
+            }
+        }, LinearLayout.LayoutParams(dp(62), matchParent))
     }
 
     private val scope = DynamicScope()
@@ -179,6 +234,20 @@ class InputView(
         }
     }
 
+    private val aiPanelListener: () -> Unit = {
+        aiPanelScrollView.post {
+            updateAiPanel()
+        }
+        Unit
+    }
+
+    private val aiManualPanelListener: () -> Unit = {
+        aiManualInputPanel.post {
+            updateAiManualInputPanel()
+        }
+        Unit
+    }
+
     val keyboardView: View
 
     init {
@@ -215,18 +284,28 @@ class InputView(
                 topOfParent()
                 centerHorizontally()
             })
-            add(leftPaddingSpace, lParams {
+            add(aiPanelScrollView, lParams {
+                below(aiManualInputPanel)
+                startOfParent()
+                endOfParent()
+            })
+            add(aiManualInputPanel, lParams {
                 below(kawaiiBar.view)
+                startToEndOf(leftPaddingSpace)
+                endToStartOf(rightPaddingSpace)
+            })
+            add(leftPaddingSpace, lParams {
+                below(aiPanelScrollView)
                 startOfParent()
                 bottomOfParent()
             })
             add(rightPaddingSpace, lParams {
-                below(kawaiiBar.view)
+                below(aiPanelScrollView)
                 endOfParent()
                 bottomOfParent()
             })
             add(windowManager.view, lParams {
-                below(kawaiiBar.view)
+                below(aiPanelScrollView)
                 above(bottomPaddingSpace)
                 /**
                  * set start and end constrain in [updateKeyboardSize]
@@ -240,6 +319,8 @@ class InputView(
         }
 
         updateKeyboardSize()
+        updateAiPanel()
+        updateAiManualInputPanel()
 
         add(preedit.ui.root, lParams(matchParent, wrapContent) {
             above(keyboardView)
@@ -255,11 +336,15 @@ class InputView(
         })
 
         keyboardPrefs.registerOnChangeListener(onKeyboardSizeChangeListener)
+        AiInlinePanel.addListener(aiPanelListener)
+        AiManualInputPanel.addListener(aiManualPanelListener)
     }
 
     private fun updateKeyboardSize() {
+        updateAiPanel()
+        updateAiManualInputPanel()
         windowManager.view.updateLayoutParams {
-            height = keyboardHeightPx
+            height = (keyboardHeightPx - aiPanelHeightPx() - aiManualInputPanelHeightPx()).coerceAtLeast(dp(120))
         }
         bottomPaddingSpace.updateLayoutParams {
             height = keyboardBottomPaddingPx
@@ -293,6 +378,51 @@ class InputView(
         }
         preedit.ui.root.setPadding(sidePadding, 0, sidePadding, 0)
         kawaiiBar.view.setPadding(sidePadding, 0, sidePadding, 0)
+        aiPanelScrollView.setPadding(sidePadding, 0, sidePadding, 0)
+        aiManualInputPanel.setPadding(0, 0, 0, 0)
+    }
+
+    private fun updateAiPanel() {
+        val text = AiInlinePanel.currentText()
+        val visible = AiInlinePanel.shouldShow(text)
+        aiPanelTextView.text = text
+        aiPanelTextView.setTextColor(aiPanelTextColor())
+        aiPanelScrollView.visibility = if (visible) VISIBLE else GONE
+        aiPanelScrollView.updateLayoutParams {
+            height = if (visible) aiPanelHeightPx() else 0
+        }
+        aiPanelScrollView.requestLayout()
+    }
+
+    private fun aiPanelHeightPx(): Int {
+        return if (AiInlinePanel.shouldShow()) dp(56) else 0
+    }
+
+    private fun aiPanelTextColor(): Int {
+        val night = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        return if (night == Configuration.UI_MODE_NIGHT_YES) {
+            Color.parseColor("#2B2C2C")
+        } else {
+            Color.parseColor("#D9D9D9")
+        }
+    }
+
+    private fun updateAiManualInputPanel() {
+        val visible = AiManualInputPanel.isVisible()
+        val text = AiManualInputPanel.currentText()
+        aiManualInputPanel.visibility = if (visible) VISIBLE else GONE
+        if (aiManualInputEdit.text.toString() != text) {
+            aiManualInputEdit.setText(text)
+            aiManualInputEdit.setSelection(aiManualInputEdit.text.length)
+        }
+        aiManualInputPanel.updateLayoutParams {
+            height = if (visible) aiManualInputPanelHeightPx() else 0
+        }
+        aiManualInputPanel.requestLayout()
+    }
+
+    private fun aiManualInputPanelHeightPx(): Int {
+        return if (AiManualInputPanel.isVisible()) dp(54) else 0
     }
 
     override fun onApplyWindowInsets(insets: WindowInsets): WindowInsets {
@@ -361,6 +491,9 @@ class InputView(
 
     override fun onDetachedFromWindow() {
         keyboardPrefs.unregisterOnChangeListener(onKeyboardSizeChangeListener)
+        AiInlinePanel.removeListener(aiPanelListener)
+        AiManualInputPanel.removeListener(aiManualPanelListener)
+        horizontalCandidate.dispose()
         // clear DynamicScope, implies that InputView should not be attached again after detached.
         scope.clear()
         super.onDetachedFromWindow()

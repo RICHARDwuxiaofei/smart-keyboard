@@ -66,6 +66,17 @@
             android:name=".ui.main.CropImageActivity"
             android:exported="false" />
         <activity
+            android:name=".extension.ai.ScreenCapturePermissionActivity"
+            android:autoRemoveFromRecents="true"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:finishOnTaskLaunch="true"
+            android:theme="@style/Theme.DialogTheme" />
+        <activity
+            android:name=".extension.ai.AiSettingsActivity"
+            android:exported="false"
+            android:label="AI 数据辅助" />
+        <activity
             android:name=".ui.main.MainActivity"
             android:exported="true"
             android:launchMode="singleTask">

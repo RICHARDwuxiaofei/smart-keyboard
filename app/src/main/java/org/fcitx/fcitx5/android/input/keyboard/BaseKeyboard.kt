@@ -41,6 +41,7 @@ import splitties.views.dsl.constraintlayout.topOfParent
 import splitties.views.dsl.core.add
 import timber.log.Timber
 import kotlin.math.absoluteValue
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 abstract class BaseKeyboard(
@@ -71,6 +72,8 @@ abstract class BaseKeyboard(
 
     var popupActionListener: PopupActionListener? = null
 
+    var onPanicGesture: (() -> Unit)? = null
+
     private val selectionSwipeThreshold = dp(10f)
     private val inputSwipeThreshold = dp(36f)
 
@@ -84,6 +87,17 @@ abstract class BaseKeyboard(
      * HashMap of [PointerId (Int)][MotionEvent.getPointerId] to [KeyView]
      */
     private val touchTarget = hashMapOf<Int, View>()
+
+    private val panicSwipeThreshold = 100f
+    private val panicHorizontalTolerance = dp(80f)
+    private var panicPointerId0 = MotionEvent.INVALID_POINTER_ID
+    private var panicPointerId1 = MotionEvent.INVALID_POINTER_ID
+    private var panicStartX0 = 0f
+    private var panicStartX1 = 0f
+    private var panicStartY0 = 0f
+    private var panicStartY1 = 0f
+    private var panicGestureTracking = false
+    private var panicGestureConsumed = false
 
     init {
         isMotionEventSplittingEnabled = true
@@ -390,7 +404,68 @@ abstract class BaseKeyboard(
         else super.onInterceptTouchEvent(ev)
     }
 
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (handlePanicGesture(ev)) return true
+        return super.dispatchTouchEvent(ev)
+    }
+
+    private fun handlePanicGesture(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> resetPanicGesture()
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                if (event.pointerCount >= 2 && !panicGestureTracking) {
+                    val index0 = 0
+                    val index1 = if (event.actionIndex == 0) 1 else event.actionIndex
+                    panicPointerId0 = event.getPointerId(index0)
+                    panicPointerId1 = event.getPointerId(index1)
+                    panicStartX0 = event.getX(index0)
+                    panicStartX1 = event.getX(index1)
+                    panicStartY0 = event.getY(index0)
+                    panicStartY1 = event.getY(index1)
+                    panicGestureTracking = true
+                    panicGestureConsumed = false
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!panicGestureTracking) return panicGestureConsumed
+                val index0 = event.findPointerIndex(panicPointerId0)
+                val index1 = event.findPointerIndex(panicPointerId1)
+                if (index0 < 0 || index1 < 0) {
+                    resetPanicGesture()
+                    return false
+                }
+                val dx0 = event.getX(index0) - panicStartX0
+                val dx1 = event.getX(index1) - panicStartX1
+                val dy0 = event.getY(index0) - panicStartY0
+                val dy1 = event.getY(index1) - panicStartY1
+                val bothMovingDown = dy0 >= panicSwipeThreshold && dy1 >= panicSwipeThreshold
+                val horizontalStable = abs(dx0) <= panicHorizontalTolerance && abs(dx1) <= panicHorizontalTolerance
+                if (!panicGestureConsumed && bothMovingDown && horizontalStable) {
+                    panicGestureConsumed = true
+                    onPanicGesture?.invoke()
+                    return true
+                }
+            }
+            MotionEvent.ACTION_POINTER_UP,
+            MotionEvent.ACTION_UP,
+            MotionEvent.ACTION_CANCEL -> {
+                val consumed = panicGestureConsumed
+                resetPanicGesture()
+                return consumed
+            }
+        }
+        return panicGestureConsumed
+    }
+
+    private fun resetPanicGesture() {
+        panicPointerId0 = MotionEvent.INVALID_POINTER_ID
+        panicPointerId1 = MotionEvent.INVALID_POINTER_ID
+        panicGestureTracking = false
+        panicGestureConsumed = false
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (handlePanicGesture(event)) return true
         if (vivoKeypressWorkaround) {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {

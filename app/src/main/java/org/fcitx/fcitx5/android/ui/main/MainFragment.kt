@@ -4,12 +4,14 @@
  */
 package org.fcitx.fcitx5.android.ui.main
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.fragment.app.activityViewModels
 import androidx.preference.PreferenceCategory
 import org.fcitx.fcitx5.android.R
+import org.fcitx.fcitx5.android.extension.ai.AiSettingsActivity
 import org.fcitx.fcitx5.android.ui.common.PaddingPreferenceFragment
 import org.fcitx.fcitx5.android.ui.main.settings.SettingsRoute
 import org.fcitx.fcitx5.android.utils.addCategory
@@ -80,6 +82,13 @@ class MainFragment : PaddingPreferenceFragment() {
                     R.drawable.ic_clipboard,
                     SettingsRoute.Clipboard
                 )
+                addPreference(
+                    "AI 数据辅助",
+                    "供应商、请求地址、模型、API Key、前置提示词与本地 Skill 知识库",
+                    icon = R.drawable.ic_baseline_extension_24
+                ) {
+                    startActivity(Intent(requireContext(), AiSettingsActivity::class.java))
+                }
                 addDestinationPreference(
                     R.string.emoji_and_symbols,
                     R.drawable.ic_baseline_emoji_symbols_24,

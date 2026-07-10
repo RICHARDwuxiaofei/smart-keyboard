@@ -166,7 +166,7 @@ class CommaKey(
         src = R.drawable.ic_baseline_tag_faces_24
     ),
     setOf(
-        Behavior.Press(KeyAction.FcitxKeyAction(","))
+        Behavior.Press(KeyAction.AiCaptureCurrentInputAction)
     ),
     arrayOf(
         Popup.Preview(","),
@@ -189,6 +189,25 @@ class CommaKey(
                 )
             )
         )
+    )
+)
+
+class PeriodKey(
+    percentWidth: Float = 0.1f,
+    variant: Variant = Variant.Alternative
+) : KeyDef(
+    Appearance.Text(
+        displayText = ".",
+        textSize = 23f,
+        percentWidth = percentWidth,
+        variant = variant
+    ),
+    setOf(
+        Behavior.Press(KeyAction.FcitxKeyAction(".")),
+        Behavior.LongPress(KeyAction.AiOpenManualInputAction)
+    ),
+    arrayOf(
+        Popup.Preview(".")
     )
 )
 

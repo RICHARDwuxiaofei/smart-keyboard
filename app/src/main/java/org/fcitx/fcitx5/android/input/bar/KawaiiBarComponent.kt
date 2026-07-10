@@ -4,6 +4,7 @@
  */
 package org.fcitx.fcitx5.android.input.bar
 
+import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.util.Size
@@ -15,6 +16,7 @@ import android.view.inputmethod.InlineSuggestion
 import android.view.inputmethod.InlineSuggestionsResponse
 import android.view.inputmethod.InputMethodSubtype
 import android.widget.FrameLayout
+import android.widget.PopupMenu
 import android.widget.ViewAnimator
 import android.widget.inline.InlineContentView
 import androidx.annotation.Keep
@@ -35,6 +37,10 @@ import org.fcitx.fcitx5.android.data.clipboard.db.ClipboardEntry
 import org.fcitx.fcitx5.android.data.prefs.AppPrefs
 import org.fcitx.fcitx5.android.data.prefs.ManagedPreference
 import org.fcitx.fcitx5.android.data.theme.ThemeManager
+import org.fcitx.fcitx5.android.extension.ai.AiConfigStore
+import org.fcitx.fcitx5.android.extension.ai.AiSettingsActivity
+import org.fcitx.fcitx5.android.extension.ai.AiTriggerMode
+import org.fcitx.fcitx5.android.extension.ai.DataAssistanceCoordinator
 import org.fcitx.fcitx5.android.input.bar.ExpandButtonStateMachine.State.ClickToAttachWindow
 import org.fcitx.fcitx5.android.input.bar.ExpandButtonStateMachine.State.ClickToDetachWindow
 import org.fcitx.fcitx5.android.input.bar.ExpandButtonStateMachine.State.Hidden
@@ -106,6 +112,7 @@ class KawaiiBarComponent : UniqueViewComponent<KawaiiBarComponent, FrameLayout>(
     private val toolbarNumRowOnPassword by prefs.keyboard.toolbarNumRowOnPassword
     private val showVoiceInputButton by prefs.keyboard.showVoiceInputButton
     private val preferredVoiceInput by prefs.keyboard.preferredVoiceInput
+    private val aiConfig by lazy { AiConfigStore(service) }
 
     private var clipboardTimeoutJob: Job? = null
 
@@ -314,7 +321,7 @@ class KawaiiBarComponent : UniqueViewComponent<KawaiiBarComponent, FrameLayout>(
                     windowManager.attachWindow(ClipboardWindow())
                 }
                 moreButton.setOnClickListener {
-                    windowManager.attachWindow(StatusAreaWindow())
+                    showMoreMenu(moreButton)
                 }
             }
             clipboardUi.suggestionView.apply {
@@ -351,6 +358,58 @@ class KawaiiBarComponent : UniqueViewComponent<KawaiiBarComponent, FrameLayout>(
                 onGestureListener = swipeDownExpandCallback
             }
         }
+    }
+
+    private fun showMoreMenu(anchor: View) {
+        PopupMenu(context, anchor).apply {
+            val aiEnabled = aiConfig.enabled
+            val currentMode = aiConfig.triggerMode
+            menu.add(
+                0,
+                MenuItemAiScreenshot,
+                0,
+                if (aiEnabled && currentMode == AiTriggerMode.Screenshot) "AI 截图模式 ✓" else "AI 截图模式"
+            )
+            menu.add(
+                0,
+                MenuItemAiManual,
+                1,
+                if (aiEnabled && currentMode == AiTriggerMode.ManualInput) "AI 手动模式 ✓" else "AI 手动模式"
+            )
+            menu.add(0, MenuItemAiOff, 2, "关闭 AI 模式")
+            menu.add(0, MenuItemAiSettings, 3, "AI 设置")
+            menu.add(0, MenuItemStatusArea, 4, "状态区域")
+            setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    MenuItemAiScreenshot -> {
+                        aiConfig.enabled = true
+                        aiConfig.triggerMode = AiTriggerMode.Screenshot
+                        true
+                    }
+                    MenuItemAiManual -> {
+                        aiConfig.enabled = true
+                        aiConfig.triggerMode = AiTriggerMode.ManualInput
+                        true
+                    }
+                    MenuItemAiOff -> {
+                        aiConfig.enabled = false
+                        DataAssistanceCoordinator.getInstance(service).panicReset()
+                        true
+                    }
+                    MenuItemAiSettings -> {
+                        val intent = Intent(service, AiSettingsActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        service.startActivity(intent)
+                        true
+                    }
+                    MenuItemStatusArea -> {
+                        windowManager.attachWindow(StatusAreaWindow())
+                        true
+                    }
+                    else -> false
+                }
+            }
+        }.show()
     }
 
     private val titleUi by lazy {
@@ -548,6 +607,11 @@ class KawaiiBarComponent : UniqueViewComponent<KawaiiBarComponent, FrameLayout>(
 
     companion object {
         const val HEIGHT = 40
+        private const val MenuItemAiScreenshot = 1000
+        private const val MenuItemAiManual = 1001
+        private const val MenuItemAiOff = 1004
+        private const val MenuItemAiSettings = 1002
+        private const val MenuItemStatusArea = 1003
     }
 
     fun onKeyboardLayoutSwitched(isNumber: Boolean) {

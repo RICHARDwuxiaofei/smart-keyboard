@@ -4,6 +4,9 @@
 # Generated asset descriptor
 /app/src/main/assets/descriptor.json
 
+# Local offline development tools and SDK archives
+/tools/
+
 # Plugins
 # Installed data
 /plugin/*/src/main/assets/usr/

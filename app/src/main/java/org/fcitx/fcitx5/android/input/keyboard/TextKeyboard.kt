@@ -70,7 +70,7 @@ class TextKeyboard(
                 CommaKey(0.1f, KeyDef.Appearance.Variant.Alternative),
                 LanguageKey(),
                 SpaceKey(),
-                SymbolKey(".", 0.1f, KeyDef.Appearance.Variant.Alternative),
+                PeriodKey(0.1f, KeyDef.Appearance.Variant.Alternative),
                 ReturnKey()
             )
         )
