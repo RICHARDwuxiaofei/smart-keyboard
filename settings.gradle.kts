@@ -1,8 +1,6 @@
 pluginManagement {
     includeBuild("build-logic")
     repositories {
-        maven("https://maven.aliyun.com/repository/google")
-        maven("https://mirrors.cloud.tencent.com/nexus/repository/maven-public")
         gradlePluginPortal()
         google()
         mavenCentral()
@@ -13,8 +11,6 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        maven("https://maven.aliyun.com/repository/google")
-        maven("https://mirrors.cloud.tencent.com/nexus/repository/maven-public")
         google()
         mavenCentral()
     }
