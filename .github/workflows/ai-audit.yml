@@ -21,47 +21,88 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify clean checkout and collect source evidence
+      - name: Verify clean source and collect history
         shell: bash
         run: |
           set -euo pipefail
           git status
-          git log --oneline -10 | tee "$RUNNER_TEMP/git-log.txt"
           test -z "$(git status --porcelain)"
+          git log --oneline -10 | tee "$RUNNER_TEMP/git-log.txt"
           git rev-parse HEAD | tee "$RUNNER_TEMP/source-sha.txt"
           git bundle create "$RUNNER_TEMP/source.bundle" --all
-          git archive --format=tar.gz --output="$RUNNER_TEMP/source.tar.gz" HEAD
+          python .github/audit-staging/prepare.py
+          git diff --stat | tee "$RUNNER_TEMP/candidate-stat.txt"
       - uses: actions/upload-artifact@v6
+        if: always()
         with:
           name: audit-source-${{ github.sha }}
           retention-days: 7
           path: |
             ${{ runner.temp }}/source.bundle
-            ${{ runner.temp }}/source.tar.gz
             ${{ runner.temp }}/source-sha.txt
             ${{ runner.temp }}/git-log.txt
+            ${{ runner.temp }}/reviewed-candidate.patch
+            ${{ runner.temp }}/candidate-stat.txt
+
+  jvm-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - run: python .github/audit-staging/prepare.py
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install pinned Kotlin compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 2 'https://github.com/JetBrains/kotlin/releases/download/v2.3.21/kotlin-compiler-2.3.21.zip' -o "$RUNNER_TEMP/kotlin.zip"
+          unzip -q "$RUNNER_TEMP/kotlin.zip" -d "$RUNNER_TEMP/compiler"
+          echo "$RUNNER_TEMP/compiler/kotlinc/bin" >> "$GITHUB_PATH"
+          echo "KOTLIN_HOME=$RUNNER_TEMP/compiler/kotlinc" >> "$GITHUB_ENV"
+      - name: Host production logic and SQLite checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/ai-audit/run-host.sh "$RUNNER_TEMP/host-results"
+          python tools/ai-audit/sqlite-regression.py | tee "$RUNNER_TEMP/host-results/sqlite-regression.log"
+      - name: Real HTTP and JSON library regression tests
+        shell: bash
+        run: bash tools/ai-audit/run-network-tests.sh "$RUNNER_TEMP/network-results"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: audit-jvm-evidence-${{ github.sha }}
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/host-results/*.log
+            ${{ runner.temp }}/network-results/*.log
 
   android-debug:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           submodules: recursive
           persist-credentials: false
-      - name: Verify workspace
+      - name: Verify clean checkout and apply reviewed candidate
         run: |
           git status
           git log --oneline -10
           test -z "$(git status --porcelain)"
+          python .github/audit-staging/prepare.py
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
       - name: Install declared SDK and native dependencies
-        id: environment
         shell: bash
         run: |
           set -euo pipefail
@@ -76,6 +117,12 @@ jobs:
         run: |
           set -o pipefail
           ./gradlew --no-daemon :app:compileDebugKotlin --stacktrace 2>&1 | tee "$RUNNER_TEMP/compile-debug.log"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: audit-compile-${{ github.sha }}
+          retention-days: 7
+          path: ${{ runner.temp }}/compile-debug.log
       - name: Assemble debug APK
         id: assemble
         continue-on-error: true
@@ -90,7 +137,14 @@ jobs:
         run: |
           set -o pipefail
           ./gradlew --no-daemon :app:testDebugUnitTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/unit-tests.log"
-      - name: Upload logs and test evidence
+      - name: Compile Android instrumentation tests
+        id: instrumentation
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon :app:assembleDebugAndroidTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/instrumentation-build.log"
+      - name: Upload build and test evidence
         if: always()
         uses: actions/upload-artifact@v6
         with:
@@ -101,9 +155,11 @@ jobs:
             ${{ runner.temp }}/compile-debug.log
             ${{ runner.temp }}/assemble-debug.log
             ${{ runner.temp }}/unit-tests.log
+            ${{ runner.temp }}/instrumentation-build.log
             app/build/reports/tests/
             app/build/test-results/
             app/build/outputs/apk/debug/
+            app/build/outputs/apk/androidTest/
       - name: Require all validation steps to pass
         if: always()
         shell: bash
@@ -111,8 +167,10 @@ jobs:
           COMPILE_RESULT: ${{ steps.compile.outcome }}
           ASSEMBLE_RESULT: ${{ steps.assemble.outcome }}
           TEST_RESULT: ${{ steps.tests.outcome }}
+          INSTRUMENTATION_RESULT: ${{ steps.instrumentation.outcome }}
         run: |
-          printf 'compile=%s assemble=%s tests=%s\n' "$COMPILE_RESULT" "$ASSEMBLE_RESULT" "$TEST_RESULT"
+          printf 'compile=%s assemble=%s tests=%s instrumentation-build=%s\n' "$COMPILE_RESULT" "$ASSEMBLE_RESULT" "$TEST_RESULT" "$INSTRUMENTATION_RESULT"
           test "$COMPILE_RESULT" = success
           test "$ASSEMBLE_RESULT" = success
           test "$TEST_RESULT" = success
+          test "$INSTRUMENTATION_RESULT" = success
