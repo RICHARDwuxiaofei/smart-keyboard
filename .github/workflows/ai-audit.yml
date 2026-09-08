@@ -1,0 +1,118 @@
+name: AI audit validation
+
+on:
+  push:
+    branches: [audit/ai-pipeline-20260909]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify clean checkout and collect source evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git status
+          git log --oneline -10 | tee "$RUNNER_TEMP/git-log.txt"
+          test -z "$(git status --porcelain)"
+          git rev-parse HEAD | tee "$RUNNER_TEMP/source-sha.txt"
+          git bundle create "$RUNNER_TEMP/source.bundle" --all
+          git archive --format=tar.gz --output="$RUNNER_TEMP/source.tar.gz" HEAD
+      - uses: actions/upload-artifact@v6
+        with:
+          name: audit-source-${{ github.sha }}
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/source.bundle
+            ${{ runner.temp }}/source.tar.gz
+            ${{ runner.temp }}/source-sha.txt
+            ${{ runner.temp }}/git-log.txt
+
+  android-debug:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+      - name: Verify workspace
+        run: |
+          git status
+          git log --oneline -10
+          test -z "$(git status --porcelain)"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install declared SDK and native dependencies
+        id: environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --install 'platforms;android-36' 'build-tools;36.1.0' 'cmake;3.31.6' 'ndk;28.0.13004108'
+          sudo apt-get update
+          sudo apt-get install -y extra-cmake-modules gettext
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Compile debug Kotlin
+        id: compile
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon :app:compileDebugKotlin --stacktrace 2>&1 | tee "$RUNNER_TEMP/compile-debug.log"
+      - name: Assemble debug APK
+        id: assemble
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon :app:assembleDebug --stacktrace 2>&1 | tee "$RUNNER_TEMP/assemble-debug.log"
+      - name: Run debug unit tests
+        id: tests
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon :app:testDebugUnitTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/unit-tests.log"
+      - name: Upload logs and test evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: audit-debug-evidence-${{ github.sha }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/compile-debug.log
+            ${{ runner.temp }}/assemble-debug.log
+            ${{ runner.temp }}/unit-tests.log
+            app/build/reports/tests/
+            app/build/test-results/
+            app/build/outputs/apk/debug/
+      - name: Require all validation steps to pass
+        if: always()
+        shell: bash
+        env:
+          COMPILE_RESULT: ${{ steps.compile.outcome }}
+          ASSEMBLE_RESULT: ${{ steps.assemble.outcome }}
+          TEST_RESULT: ${{ steps.tests.outcome }}
+        run: |
+          printf 'compile=%s assemble=%s tests=%s\n' "$COMPILE_RESULT" "$ASSEMBLE_RESULT" "$TEST_RESULT"
+          test "$COMPILE_RESULT" = success
+          test "$ASSEMBLE_RESULT" = success
+          test "$TEST_RESULT" = success
