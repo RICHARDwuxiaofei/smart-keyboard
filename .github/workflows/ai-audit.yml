@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: ai-audit-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   source-evidence:
@@ -43,6 +43,7 @@ jobs:
             ${{ runner.temp }}/git-log.txt
             ${{ runner.temp }}/reviewed-candidate.patch
             ${{ runner.temp }}/candidate-stat.txt
+            .github/audit-staging/followup.patch
 
   jvm-regression:
     runs-on: ubuntu-24.04
@@ -110,6 +111,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y extra-cmake-modules gettext
       - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: false
       - name: Compile debug Kotlin
         id: compile
         continue-on-error: true
@@ -174,3 +177,42 @@ jobs:
           test "$ASSEMBLE_RESULT" = success
           test "$TEST_RESULT" = success
           test "$INSTRUMENTATION_RESULT" = success
+
+  emulator-regression:
+    needs: android-debug
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/download-artifact@v7
+        with:
+          name: audit-debug-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/evidence
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Real Android Room, editor, native Pinyin and OCR tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          cores: 2
+          ram-size: 2048M
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -camera-back none
+          script: bash .github/audit-staging/run-device-tests.sh "$RUNNER_TEMP/evidence" "$RUNNER_TEMP/runtime"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: audit-runtime-evidence-${{ github.sha }}
+          retention-days: 7
+          path: ${{ runner.temp }}/runtime/

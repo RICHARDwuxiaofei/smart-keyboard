@@ -1,4 +1,4 @@
-"""Apply only the checksum-verified reviewed candidate in an isolated CI checkout."""
+"""Apply only reviewed patches in an isolated CI checkout."""
 from pathlib import Path
 import hashlib
 import lzma
@@ -20,5 +20,11 @@ else:
     destination.write_bytes(patch)
     subprocess.run(['git', 'apply', '--check', str(destination)], check=True)
     subprocess.run(['git', 'apply', str(destination)], check=True)
+    followup = root / 'followup.patch'
+    assert hashlib.sha256(followup.read_bytes()).hexdigest() == '2c5a191c29b33c3350ca04bc043c5ffe4984142a31bc11624aa148fd35d1a2b2'
+    subprocess.run(['git', 'apply', '--check', str(followup)], check=True)
+    subprocess.run(['git', 'apply', str(followup)], check=True)
+    subprocess.run(['git', 'add', '-N', '--', '.'], check=True)
     subprocess.run(['git', 'diff', '--check'], check=True)
-    print('Applied reviewed candidate SHA-256:', digest)
+    print('Applied candidate SHA-256:', digest)
+    print('Applied native/OCR test and candidate identity follow-up:', hashlib.sha256(followup.read_bytes()).hexdigest())

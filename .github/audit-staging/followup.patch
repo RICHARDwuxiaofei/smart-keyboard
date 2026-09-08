@@ -1,0 +1,149 @@
+diff --git a/app/src/androidTest/java/org/fcitx/fcitx5/android/extension/ai/AiNativeAndOcrTest.kt b/app/src/androidTest/java/org/fcitx/fcitx5/android/extension/ai/AiNativeAndOcrTest.kt
+new file mode 100644
+index 000000000..19befd4d8
+--- /dev/null
++++ b/app/src/androidTest/java/org/fcitx/fcitx5/android/extension/ai/AiNativeAndOcrTest.kt
+@@ -0,0 +1,99 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++package org.fcitx.fcitx5.android.extension.ai
++
++import android.graphics.Bitmap
++import android.graphics.Canvas
++import android.graphics.Color
++import android.graphics.Paint
++import android.graphics.Typeface
++import androidx.test.platform.app.InstrumentationRegistry
++import kotlinx.coroutines.*
++import kotlinx.coroutines.channels.Channel
++import kotlinx.coroutines.flow.collect
++import org.fcitx.fcitx5.android.core.FcitxEvent
++import org.fcitx.fcitx5.android.core.KeyStates
++import org.fcitx.fcitx5.android.daemon.FcitxDaemon
++import org.junit.Assert.*
++import org.junit.Test
++
++/** Real Android/native tests. They do not simulate an IME window or another application's editor. */
++class AiNativeAndOcrTest {
++    @Test(timeout = 60000)
++    fun realPinyinCommitGoesToManualBufferAndNormalRoutingReturns(): Unit = runBlocking {
++        withTimeout(45000) {
++            val clientName = "ai-native-regression"
++            val connection = FcitxDaemon.connect(clientName)
++            val commits = Channel<String>(Channel.UNLIMITED)
++            var savedIme: Array<String>? = null
++            var savedActive: String? = null
++            var collector: Job? = null
++            try {
++                connection.runOnReady {
++                    savedIme = enabledIme().map { it.uniqueName }.toTypedArray()
++                    savedActive = currentIme().uniqueName
++                }
++                val flow = connection.runImmediately { eventFlow }
++                collector = launch(Dispatchers.Main.immediate) {
++                    flow.collect { event ->
++                        AiManualInputRouter.handle(event)
++                        if (event is FcitxEvent.CommitStringEvent) commits.send(event.data.text)
++                    }
++                }
++                // Ensure the main-thread collector is subscribed before native key events start.
++                withContext(Dispatchers.Main) { AiManualInputPanel.beginTransition() }
++                connection.runOnReady {
++                    setEnabledIme(arrayOf("keyboard-us", "pinyin"))
++                    activateIme("pinyin")
++                    focusOutIn()
++                }
++                withContext(Dispatchers.Main) { AiManualInputPanel.show("") }
++                connection.runOnReady {
++                    "nihao".forEach { sendKey(it, KeyStates.Virtual.states) }
++                    assertTrue("Pinyin must expose a selectable native candidate", select(0))
++                }
++                assertEquals("\u4f60\u597d", commits.receive())
++                withContext(Dispatchers.Main) {
++                    assertEquals("\u4f60\u597d", AiManualInputPanel.currentText())
++                    AiManualInputPanel.hide(clearText = true)
++                    assertFalse("Closed manual mode must not intercept native commits",
++                        AiManualInputRouter.handle(FcitxEvent.CommitStringEvent(FcitxEvent.CommitStringEvent.Data("normal", -1))))
++                }
++            } finally {
++                withContext(NonCancellable) {
++                    withContext(Dispatchers.Main) { AiManualInputPanel.beginTransition() }
++                    try {
++                        withTimeout(5000) {
++                            connection.runOnReady {
++                                reset()
++                                savedIme?.let { setEnabledIme(it) }
++                                savedActive?.let { activateIme(it) }
++                            }
++                        }
++                    } finally {
++                        collector?.cancelAndJoin()
++                        withContext(Dispatchers.Main) { AiManualInputPanel.hide(clearText = true) }
++                        FcitxDaemon.disconnect(clientName)
++                        commits.close()
++                    }
++                }
++            }
++        }
++    }
++
++    @Test(timeout = 60000)
++    fun realBundledMlKitRecognizesBitmapAndReleasesIt(): Unit = runBlocking {
++        val context = InstrumentationRegistry.getInstrumentation().targetContext
++        val bitmap = Bitmap.createBitmap(1000, 250, Bitmap.Config.ARGB_8888)
++        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
++            color = Color.BLACK
++            textSize = 72f
++            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
++        }
++        Canvas(bitmap).apply { drawColor(Color.WHITE); drawText("HELLO 123", 40f, 150f, paint) }
++        val result = withTimeout(45000) { ScreenCaptureOcrPipeline(context).recognizeOffline(bitmap) }
++        assertTrue("Expected deterministic Latin fixture from Chinese-capable ML Kit: $result",
++            result.replace(" ", "").contains("HELLO123"))
++        withTimeout(2000) { while (!bitmap.isRecycled) delay(20) }
++        assertTrue(bitmap.isRecycled)
++    }
++}
+diff --git a/app/src/androidTest/java/org/fcitx/fcitx5/android/extension/ai/AiRoomAndEditorTest.kt b/app/src/androidTest/java/org/fcitx/fcitx5/android/extension/ai/AiRoomAndEditorTest.kt
+index ff69e5565..d808d58a4 100644
+--- a/app/src/androidTest/java/org/fcitx/fcitx5/android/extension/ai/AiRoomAndEditorTest.kt
++++ b/app/src/androidTest/java/org/fcitx/fcitx5/android/extension/ai/AiRoomAndEditorTest.kt
+@@ -2,6 +2,7 @@
+ package org.fcitx.fcitx5.android.extension.ai
+ 
+ import android.text.InputType
++import android.view.View
+ import android.view.inputmethod.BaseInputConnection
+ import android.view.inputmethod.EditorInfo
+ import androidx.room.Room
+@@ -28,7 +29,7 @@ class AiRoomAndEditorTest {
+         } finally { database.close() }
+     }
+     @Test fun sensitiveEditorsAreNeverRead() {
+-        val connection=object:BaseInputConnection(null,true) {
++        val connection=object:BaseInputConnection(View(InstrumentationRegistry.getInstrumentation().targetContext),true) {
+             override fun getTextBeforeCursor(n:Int,flags:Int):CharSequence { fail("Password field was read"); return "" }
+         }
+         listOf(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
+@@ -41,7 +42,7 @@ class AiRoomAndEditorTest {
+         }
+     }
+     @Test fun fallbackIncludesSelectionExactlyOnce() {
+-        val connection=object:BaseInputConnection(null,true) {
++        val connection=object:BaseInputConnection(View(InstrumentationRegistry.getInstrumentation().targetContext),true) {
+             override fun getTextBeforeCursor(n:Int,flags:Int):CharSequence="before"
+             override fun getSelectedText(flags:Int):CharSequence="selected"
+             override fun getTextAfterCursor(n:Int,flags:Int):CharSequence="after"
+diff --git a/app/src/main/java/org/fcitx/fcitx5/android/input/candidates/horizontal/HorizontalCandidateComponent.kt b/app/src/main/java/org/fcitx/fcitx5/android/input/candidates/horizontal/HorizontalCandidateComponent.kt
+index 8733d8837..6df199b64 100644
+--- a/app/src/main/java/org/fcitx/fcitx5/android/input/candidates/horizontal/HorizontalCandidateComponent.kt
++++ b/app/src/main/java/org/fcitx/fcitx5/android/input/candidates/horizontal/HorizontalCandidateComponent.kt
+@@ -99,6 +99,9 @@ class HorizontalCandidateComponent :
+ 
+     val adapter: HorizontalCandidateViewAdapter by lazy {
+         object : HorizontalCandidateViewAdapter(theme) {
++            // An injected row can equal a native candidate. Content hashes are not unique IDs.
++            init { setHasStableIds(false) }
++
+             override fun onBindViewHolder(holder: CandidateViewHolder, position: Int) {
+                 super.onBindViewHolder(holder, position)
+                 holder.itemView.updateLayoutParams<FlexboxLayoutManager.LayoutParams> {
