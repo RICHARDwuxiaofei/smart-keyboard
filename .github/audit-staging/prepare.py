@@ -20,11 +20,15 @@ else:
     destination.write_bytes(patch)
     subprocess.run(['git', 'apply', '--check', str(destination)], check=True)
     subprocess.run(['git', 'apply', str(destination)], check=True)
-    followup = root / 'followup.patch'
-    assert hashlib.sha256(followup.read_bytes()).hexdigest() == '2c5a191c29b33c3350ca04bc043c5ffe4984142a31bc11624aa148fd35d1a2b2'
-    subprocess.run(['git', 'apply', '--check', str(followup)], check=True)
-    subprocess.run(['git', 'apply', str(followup)], check=True)
+    for name, expected in (
+        ('followup.patch', '2c5a191c29b33c3350ca04bc043c5ffe4984142a31bc11624aa148fd35d1a2b2'),
+        ('resource-followup.patch', '134f51394e3eb64266ebfd9a159034a63d1269163e0bca951269e449eb2329d0'),
+    ):
+        followup = root / name
+        assert hashlib.sha256(followup.read_bytes()).hexdigest() == expected, name
+        subprocess.run(['git', 'apply', '--check', str(followup)], check=True)
+        subprocess.run(['git', 'apply', str(followup)], check=True)
+        print('Applied follow-up:', name, expected)
     subprocess.run(['git', 'add', '-N', '--', '.'], check=True)
     subprocess.run(['git', 'diff', '--check'], check=True)
-    print('Applied candidate SHA-256:', digest)
-    print('Applied native/OCR test and candidate identity follow-up:', hashlib.sha256(followup.read_bytes()).hexdigest())
+    print('Applied original candidate SHA-256:', digest)

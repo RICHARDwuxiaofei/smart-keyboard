@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: ai-audit-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   source-evidence:
@@ -44,6 +44,7 @@ jobs:
             ${{ runner.temp }}/reviewed-candidate.patch
             ${{ runner.temp }}/candidate-stat.txt
             .github/audit-staging/followup.patch
+            .github/audit-staging/resource-followup.patch
 
   jvm-regression:
     runs-on: ubuntu-24.04

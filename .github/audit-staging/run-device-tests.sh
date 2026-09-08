@@ -4,7 +4,7 @@ source_root="${1:?APK evidence directory required}"
 output="${2:?Output directory required}"
 mkdir -p "$output"
 trap 'adb logcat -d > "$output/logcat.txt" || true' EXIT
-mapfile -t apps < <(find "$source_root" -type f -name '*debug-x86_64.apk')
+mapfile -t apps < <(find "$source_root" -type f -name '*-x86_64-debug.apk')
 mapfile -t tests < <(find "$source_root" -type f -path '*/androidTest/*' -name '*.apk')
 test "${#apps[@]}" -eq 1
 test "${#tests[@]}" -eq 1

@@ -1,0 +1,14 @@
+diff --git a/app/src/androidTest/res/values/test_app_alias_targets.xml b/app/src/androidTest/res/values/test_app_alias_targets.xml
+new file mode 100644
+index 000000000..13fad493e
+--- /dev/null
++++ b/app/src/androidTest/res/values/test_app_alias_targets.xml
+@@ -0,0 +1,8 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- The build type's generated aliases are also emitted into the test APK,
++     but the target application's resources are not merged into that APK. -->
++<resources>
++    <item name="ic_launcher_debug" type="mipmap">@android:drawable/sym_def_app_icon</item>
++    <item name="ic_launcher_round_debug" type="mipmap">@android:drawable/sym_def_app_icon</item>
++    <string name="app_name_debug">Smart Keyboard instrumentation</string>
++</resources>
